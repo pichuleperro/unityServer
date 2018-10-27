@@ -8,8 +8,8 @@ const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
 const uniqueValidator = require('mongoose-unique-validator');
 const bcryptjs = require('bcryptjs');
-const { OAuth2Client } = require('google-auth-library');
-const client = new OAuth2Client(process.env.CLIENT_ID);
+//const { OAuth2Client } = require('google-auth-library');  ||    Módulos para google sign - in
+//const client = new OAuth2Client(process.env.CLIENT_ID);   ||
 
 //===================
 // CONFIGURACION EXPRESS
@@ -30,31 +30,7 @@ let server = http.createServer(app);
 const publicPath = path.resolve(__dirname, '../public');
 const port = process.env.PORT || 3000;
 app.use(express.static(publicPath));
-//===================
-// GOOGLE SIGN IN get token 
-//===================
-/*
-app.post('/google', async(req, res) => {
-    let token = req.body.idtoken;
-    usuarioGoogle = await verify(token);
 
-});
-*/
-//===================
-// AOUTH GOOGLE SIGN IN , procesar token 
-//===================
-
-async function verify(token) {
-    const ticket = await client.verifyIdToken({
-        idToken: token,
-        audience: process.env.CLIENT_ID,
-    });
-    const payload = ticket.getPayload();
-    return {
-        nombre: payload.name,
-        email: payload.email
-    }
-}
 server.listen(port, (err) => {
     if (err) throw new Error(err);
     console.log(`Servidor corriendo en puerto ${ port }`);
@@ -64,6 +40,8 @@ server.listen(port, (err) => {
 // CONEXION A MONGOOSE  
 //===================
 //////////////////////////////////////////////
+
+
 mongoose.connect('mongodb://localhost:27017/tandemTela', { useNewUrlParser: true }, (err, res) => {
     if (err) throw err;
     let enLinea = 'EN LINEA'.green;
@@ -134,6 +112,10 @@ app.post('/google', async(req, res) => {
 
 });
 */
+let rooms = [];
+let shortid = require('shortid');
+
+
 
 io.on('connection', (client) => {
 
@@ -143,12 +125,7 @@ io.on('connection', (client) => {
     console.log('Estableciendo conexion con el usuario'.green);
     console.log();
 
-
-
-
     client.on('registro', (data) => {
-        //console.log(data);
-
 
         let player = new Usuario({
             UserName: data.UserName,
@@ -165,15 +142,9 @@ io.on('connection', (client) => {
                 console.log(`Cliente: ${usuarioDBNombre} ha sido registrado exitosamente `);
             }
         });
-
-
-
     });
 
-
-
     client.on('Login', (data) => {
-
 
         Usuario.findOne({ UserName: data.UserName }, (err, usuarioDB) => {
 
@@ -197,6 +168,116 @@ io.on('connection', (client) => {
     });
 
 
+
+    function UnirseASala(clientId, gameMode) {
+
+        let playersRoomsBR = 3;
+        let playersRoomsSG = 2;
+
+        let player = {
+                id: clientId
+            }
+            // una vez que sepamos que exista una sala debemos ingresar al player a dicha sala ya creada
+
+        if (gameMode == 'BattleRoyale') {
+            for (let index = 0; index < rooms.length; index++) {
+                const element = rooms[index];
+                if (element.gameMode == 'BattleRoyale') {
+                    if (element.players.length < playersRoomsBR) { element.disponible = true; } else { element.disponible = false; }
+                }
+
+                if (element.disponible && element.gameMode == 'BattleRoyale') { element.players.push(player); break; }
+
+
+                console.log(element.players);
+            }
+        }
+        if (gameMode == 'StealGold') {
+            for (let index = 0; index < rooms.length; index++) {
+                const element = rooms[index];
+                if (element.gameMode == 'StealGold') {
+                    if (element.players.length < playersRoomsSG) { element.disponible = true; } else { element.disponible = false; }
+                }
+
+                if (element.disponible && element.gameMode == 'StealGold') { element.players.push(player); break; }
+
+
+                console.log(element.players);
+            }
+        }
+
+
+
+
+
+    }
+
+    function SalasBattleRoyaleDisponibles() {
+
+        let i = Number();
+
+        rooms.forEach(element => {
+            if (element.disponible && element.gameMode == 'BattleRoyale') { i++; }
+        });
+
+        return i;
+    }
+
+    function SalasStealGoldDisponibles() {
+
+        let i = Number();
+
+        rooms.forEach(element => {
+            if (element.disponible && element.gameMode == 'StealGold') { i++; }
+        });
+
+        return i;
+    }
+
+
+    function CrearSala(_gameMode) {
+        let _idRoom = shortid.generate();
+
+        let room = {
+            idRoom: _idRoom,
+            gameMode: _gameMode,
+            players: [],
+            disponible: true
+        }
+
+        rooms.push(room);
+
+    }
+
+
+    client.on('BuscarSala', (data) => {
+
+        // recordar si el usuario cancela la busqueda
+        if (data.GameMode == 'BattleRoyale') {
+            if (SalasBattleRoyaleDisponibles() != 0) { UnirseASala(client.id, data.GameMode); }
+
+            if (SalasBattleRoyaleDisponibles() == 0) {
+                CrearSala(data.GameMode);
+                UnirseASala(client.id, data.GameMode);
+            }
+        }
+        if (data.GameMode == 'StealGold') {
+            if (SalasStealGoldDisponibles() != 0) { UnirseASala(client.id, data.GameMode); }
+
+            if (SalasStealGoldDisponibles() == 0) {
+                CrearSala(data.GameMode);
+                UnirseASala(client.id, data.GameMode);
+            }
+        }
+
+
+        console.log('Cantidad de salas : '.yellow + `${rooms.length}`.green);
+        console.log();
+
+        console.log(rooms);
+        console.log();
+
+    });
 
 
 
