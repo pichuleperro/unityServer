@@ -1,3 +1,4 @@
+//#region requires
 require('colors');
 const express = require('express');
 const socketIO = require('socket.io');
@@ -10,9 +11,10 @@ const uniqueValidator = require('mongoose-unique-validator');
 const bcryptjs = require('bcryptjs');
 //const { OAuth2Client } = require('google-auth-library');  ||    Módulos para google sign - in
 //const client = new OAuth2Client(process.env.CLIENT_ID);   ||
+//#endregion
 
 //===================
-// CONFIGURACION EXPRESS
+//#region CONFIGURACION EXPRESS
 //===================
 app.use(bodyParser.urlencoded({ extended: false }))
 app.use(bodyParser.json());
@@ -36,8 +38,9 @@ server.listen(port, (err) => {
     console.log(`Servidor corriendo en puerto ${ port }`);
     console.log();
 });
+//#endregion
 //===================
-// CONEXION A MONGOOSE  
+//#region CONEXION A MONGOOSE Y ESQUEMA MODELS 
 //===================
 //////////////////////////////////////////////
 
@@ -48,6 +51,7 @@ mongoose.connect('mongodb://localhost:27017/tandemTela', { useNewUrlParser: true
     console.log();
     console.log(`Base de datos ${enLinea}`);
 });
+mongoose.set('useCreateIndex', true);
 //===================
 // USUARIO ESQUEMA MODELS 
 //===================
@@ -89,11 +93,11 @@ usuarioSchema.methods.toJSON = function() {
 }
 usuarioSchema.plugin(uniqueValidator, { message: '{PATH} debe de ser unico' });
 let Usuario = mongoose.model('Usuario', usuarioSchema);
+//#endregion
+
 //===================
-// CONEXION , ENVIO DE DATOS AL CLIENTE Y GUARDADO DE DATOS 
+//#region CONEXION , ENVIO DE DATOS AL CLIENTE Y GUARDADO DE DATOS 
 //===================
-//////////////////////////////////////////////
-//////////////////////////////////////////////
 //////////////////////////////////////////////
 
 let io = socketIO(server);
@@ -113,6 +117,7 @@ app.post('/google', async(req, res) => {
 });
 */
 let rooms = [];
+let playersConnected = [];
 let shortid = require('shortid');
 
 
@@ -125,11 +130,14 @@ io.on('connection', (client) => {
     console.log('Estableciendo conexion con el usuario'.green);
     console.log();
 
+
+
     client.on('registro', (data) => {
 
         let player = new Usuario({
             UserName: data.UserName,
-            password: bcryptjs.hashSync(data.PassWord, 10)
+            password: bcryptjs.hashSync(data.PassWord, 10),
+
         });
         player.save((err, usuarioDB) => {
             if (err) {
@@ -163,11 +171,110 @@ io.on('connection', (client) => {
 
             let usuarioDBNombre = `${usuarioDB.UserName}`.green;
             console.log(`Cliente: ${usuarioDBNombre} se ha autenticado exitosamente `);
+
+            let player = {
+                id: usuarioDB._id,
+                nombre: usuarioDB.UserName,
+                idSession: client.id
+            }
+            playersConnected.push(player);
+            // emitir al cliente la id
+            client.emit('UserData', { player: player });
+
         });
 
     });
 
+    client.on('BuscarSala', (data) => {
 
+
+        if (data.GameMode == 'BattleRoyale') {
+            if (SalasBattleRoyaleDisponibles() != 0) { UnirseASala(client.id, data.GameMode); return ComenzarPartida(); }
+
+            if (SalasBattleRoyaleDisponibles() == 0) {
+                CrearSala(data.GameMode);
+                UnirseASala(client.id, data.GameMode);
+                return ComenzarPartida();
+            }
+        }
+        if (data.GameMode == 'StealGold') {
+            if (SalasStealGoldDisponibles() != 0) { UnirseASala(client.id, data.GameMode); return ComenzarPartida(); }
+
+            if (SalasStealGoldDisponibles() == 0) {
+                CrearSala(data.GameMode);
+                UnirseASala(client.id, data.GameMode);
+                return ComenzarPartida();
+            }
+        }
+
+
+
+        console.log();
+        console.log('Cantidad de salas : '.yellow + `${rooms.length}`.green);
+        console.log();
+
+
+
+
+    });
+
+    client.on('Cancelar', (data) => {
+
+        console.log(`El jugador ${data.userName} ha cancelado la busqueda`);
+
+        SalirSala(data.idSession);
+
+    });
+
+    client.on('Partida', (data) => {
+
+        io.to(data.idRoom).emit('Partida', { id: client.id });
+
+    });
+
+    client.on('Input', (data) => {
+
+        io.to(data.idRoom).emit('Input', { input: data.input, id: client.id });
+        // client.emit('Input', { x: data.x });
+
+    });
+
+    client.on('UpdatePos', (data) => {
+
+        console.log(data);
+        client.broadcast.to(data.idRoom).emit('UpdatePos', { x: data.x, y: data.y, id: client.id });
+        // io.to(data.idRoom).emit('UpdatePos', { x: data.x, y: data.y, id: client.id });
+
+    });
+
+
+
+
+    function SalirSala(_id) {
+
+        for (let index = 0; index < rooms.length; index++) {
+            const element = rooms[index];
+
+            for (let i = 0; i < element.players.length; i++) {
+                const e = element.players[i];
+                if (e.id == _id) {
+
+                    function Jugador(player) {
+                        return player.id === _id;
+                    }
+
+                    let pos = element.players.findIndex(Jugador); // buscamos al jugador en la room
+
+                    element.players.splice(pos, 1); // eliminamos al jugador de la room
+
+                    client.leave(element.idRoom); // desconectamos al jugador de la room
+
+                    break;
+
+                }
+            }
+        }
+    } //// aca retiramos al usuario de la sala 
 
     function UnirseASala(clientId, gameMode) {
 
@@ -175,9 +282,8 @@ io.on('connection', (client) => {
         let playersRoomsSG = 2;
 
         let player = {
-                id: clientId
-            }
-            // una vez que sepamos que exista una sala debemos ingresar al player a dicha sala ya creada
+            id: client.id
+        }
 
         if (gameMode == 'BattleRoyale') {
             for (let index = 0; index < rooms.length; index++) {
@@ -186,10 +292,14 @@ io.on('connection', (client) => {
                     if (element.players.length < playersRoomsBR) { element.disponible = true; } else { element.disponible = false; }
                 }
 
-                if (element.disponible && element.gameMode == 'BattleRoyale') { element.players.push(player); break; }
+                if (element.disponible && element.gameMode == 'BattleRoyale') {
+                    element.players.push(player);
+                    client.join(element.idRoom); // ingresamos al usuario a la sala
 
+                    if (element.players.length < playersRoomsBR) { element.disponible = true; } else { element.disponible = false; }
 
-                console.log(element.players);
+                    break;
+                }
             }
         }
         if (gameMode == 'StealGold') {
@@ -199,17 +309,14 @@ io.on('connection', (client) => {
                     if (element.players.length < playersRoomsSG) { element.disponible = true; } else { element.disponible = false; }
                 }
 
-                if (element.disponible && element.gameMode == 'StealGold') { element.players.push(player); break; }
+                if (element.disponible && element.gameMode == 'StealGold') {
+                    element.players.push(player);
+                    client.join(element.idRoom); // ingresamos al usuario a la sala
 
-
-                console.log(element.players);
+                    break;
+                }
             }
         }
-
-
-
-
-
     }
 
     function SalasBattleRoyaleDisponibles() {
@@ -234,7 +341,6 @@ io.on('connection', (client) => {
         return i;
     }
 
-
     function CrearSala(_gameMode) {
         let _idRoom = shortid.generate();
 
@@ -242,42 +348,38 @@ io.on('connection', (client) => {
             idRoom: _idRoom,
             gameMode: _gameMode,
             players: [],
-            disponible: true
+            disponible: true,
+            enPartida: false
         }
-
         rooms.push(room);
+    }
 
+    function ComenzarPartida() {
+        // verificar si la sala esta completa . si lo está , enviar al cliente la sala con todos sus jugadores y comenzar la partida.
+
+        for (let index = 0; index < rooms.length; index++) {
+            const element = rooms[index];
+
+            if (element.disponible) { element.enPartida = false }
+
+            if (!element.disponible && !element.enPartida) {
+
+                //  client.broadcast.to(element.idRoom).emit('ComenzarPartida', { idRoom: element.idRoom, players: element.players });
+                io.to(element.idRoom).emit('ComenzarPartida', { idRoom: element.idRoom, players: element.players });
+                element.enPartida = true;
+
+                let s = `${element.idRoom}`.green;
+                console.log(`La sala ${s} ha comenzado la partida `);
+                console.log();
+                console.log(element.players);
+            }
+            //
+
+        }
+        console.log(rooms);
     }
 
 
-    client.on('BuscarSala', (data) => {
-
-        // recordar si el usuario cancela la busqueda
-        if (data.GameMode == 'BattleRoyale') {
-            if (SalasBattleRoyaleDisponibles() != 0) { UnirseASala(client.id, data.GameMode); }
-
-            if (SalasBattleRoyaleDisponibles() == 0) {
-                CrearSala(data.GameMode);
-                UnirseASala(client.id, data.GameMode);
-            }
-        }
-        if (data.GameMode == 'StealGold') {
-            if (SalasStealGoldDisponibles() != 0) { UnirseASala(client.id, data.GameMode); }
-
-            if (SalasStealGoldDisponibles() == 0) {
-                CrearSala(data.GameMode);
-                UnirseASala(client.id, data.GameMode);
-            }
-        }
-
-
-        console.log('Cantidad de salas : '.yellow + `${rooms.length}`.green);
-        console.log();
-
-        console.log(rooms);
-        console.log();
-
-    });
 
 
 
@@ -291,10 +393,18 @@ io.on('connection', (client) => {
 
 
     client.on('disconnect', () => {
+
+
+        /*  comprobar si el usuario  se encuentra buscando partida , y si durante este proceso éste se desconecta 
+            sacarlo de la lista de rooms , ademas comprobar si el usuario ya en partida se llega a desconectar implementar
+            un método para la reconexión 
+        */
+        let u = `${client.id}`.green;
         console.log();
-        console.log('Desconexion del usuario'.red);
+        console.log(`Desconexion del usuario con el id : ${u}`.red);
         console.log();
 
     });
 
 });
+//#endregion
