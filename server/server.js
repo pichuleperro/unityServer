@@ -282,8 +282,9 @@ io.on('connection', (client) => {
         let playersRoomsSG = 2;
 
         let player = {
-            id: client.id
-        }
+                id: client.id
+            }
+            ///////
 
         if (gameMode == 'BattleRoyale') {
             for (let index = 0; index < rooms.length; index++) {
